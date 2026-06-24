@@ -1,0 +1,208 @@
+# =====================================================================
+# Weather data pipeline configuration  (India-only)
+# Everything that controls SCALE / COST lives here. Edit this, not code.
+# =====================================================================
+
+# --- Geographic scope: India bounding box -----------------------------
+# Mainland + most territories. Tighten/loosen as needed.
+region:
+  name: india
+  lat_min: 6.5      # southern tip (Kanyakumari ~8N; 6.5 includes offshore)
+  lat_max: 37.5     # northern Kashmir
+  lon_min: 68.0     # western Gujarat/Rann
+  lon_max: 97.5     # eastern Arunachal
+  # Grid spacing in degrees. THIS is the main cost knob.
+  #   1.0  -> ~900 cells   (validation / free-tier friendly)
+  #   0.5  -> ~3,600 cells
+  #   0.25 -> ~14,000 cells (Open-Meteo/ERA5 native; heavy)
+  resolution_deg: 0.5
+  # Fetch ONLY cells inside India (point-in-polygon vs GADM). Drops ocean /
+  # neighbouring-country cells -> no blank state/district/pincode, and ~70% fewer
+  # API calls. Needs data/reference/gadm41_IND.gpkg.
+  india_only: true
+  # 0 = strictly inside India's borders (grid matches the geo enrichment exactly ->
+  # zero blank state/district/pincode). Raise to include offshore/border cells, but
+  # those buffer cells will have blank geo (they're outside the admin polygons).
+  coast_buffer_deg: 0.0
+
+# --- Time scope -------------------------------------------------------
+# Open-Meteo historical-forecast archive begins 2021; ERA5 archive 1940.
+# We default to a SHORT validation window. Widen start_date for the
+# real backfill once the pipeline is proven.
+time:
+  start_date: "2024-06-01"
+  end_date:   "2024-06-07"   # 1 week -> quick end-to-end proof
+  timezone:   "Asia/Kolkata"
+  # Keep only every Nth hour (IST-aligned) -> 6 = 4 rows/day (00,06,12,18 IST).
+  # NOTE: shrinks stored rows, but does NOT reduce Open-Meteo cost/rate-limits
+  # (billing is by variables x days, not hourly steps). Set 1 for full hourly.
+  temporal_step_hours: 6
+
+# --- Daily incremental pull -------------------------------------------
+# run_daily.py pulls a TRAILING window ending `lag_days` ago. The lag
+# exists because ERA5/IMD finalize recent days with a delay; re-pulling a
+# few trailing days each run lets late/revised values land.
+incremental:
+  lag_days: 5          # how many days back the window ENDS (skip un-finalized days)
+  trailing_days: 3     # how many days the window spans (catches revisions)
+
+# --- Open-Meteo (primary source: hourly, many variables) --------------
+openmeteo:
+  archive_url: "https://archive-api.open-meteo.com/v1/archive"
+  forecast_url: "https://api.open-meteo.com/v1/forecast"   # separate host for forecast
+  forecast_days: 7           # max 16; kept at 7 by default to stay under free-tier limits
+  api_key: ""                # set for commercial/paid tier -> uses customer endpoint
+  # FIXED pipeline id stamped on every Open-Meteo row (identifies this API's runs).
+  pipeline_run_id: "openmeteo_daily_v1"
+  # Cells fetched per HTTP request (Open-Meteo accepts comma-separated coords).
+  # Smaller batches = finer cost pacing. Cost is weighted, not per-request.
+  cells_per_request: 50
+  # Cost-aware pacing: stay under this many weighted calls per rolling minute
+  # (hard free limit is 600/min). Reactive backoff handles overruns.
+  minute_cost_budget: 500
+  rate_limit_backoff_s: 65
+  max_retries: 6
+  # FULL archive (ERA5) surface catalog that returns real data over India (46).
+  # Validated live against the archive endpoint; 10 forecast-model-only params
+  # (cape, 80-180m winds/temps, alt soil layers, freezing_level_height) are
+  # all-NaN in ERA5 and intentionally excluded. Cost ~ proportional to count.
+  hourly_variables:
+    # temperature & humidity
+    - temperature_2m
+    - relative_humidity_2m
+    - dew_point_2m
+    - apparent_temperature
+    - wet_bulb_temperature_2m
+    # pressure
+    - pressure_msl
+    - surface_pressure
+    # precipitation
+    - precipitation
+    - rain
+    - showers
+    - snowfall
+    - snow_depth
+    - weather_code
+    # cloud cover
+    - cloud_cover
+    - cloud_cover_low
+    - cloud_cover_mid
+    - cloud_cover_high
+    # evapotranspiration / atmospheric moisture
+    - et0_fao_evapotranspiration
+    - vapour_pressure_deficit
+    - total_column_integrated_water_vapour
+    - boundary_layer_height
+    # wind
+    - wind_speed_10m
+    - wind_speed_100m
+    - wind_direction_10m
+    - wind_direction_100m
+    - wind_gusts_10m
+    # soil temperature (4 layers)
+    - soil_temperature_0_to_7cm
+    - soil_temperature_7_to_28cm
+    - soil_temperature_28_to_100cm
+    - soil_temperature_100_to_255cm
+    # soil moisture (4 layers)
+    - soil_moisture_0_to_7cm
+    - soil_moisture_7_to_28cm
+    - soil_moisture_28_to_100cm
+    - soil_moisture_100_to_255cm
+    # solar / radiation (average over hour)
+    - shortwave_radiation
+    - direct_radiation
+    - diffuse_radiation
+    - direct_normal_irradiance
+    - terrestrial_radiation
+    # solar / radiation (instantaneous)
+    - shortwave_radiation_instant
+    - direct_radiation_instant
+    - diffuse_radiation_instant
+    - direct_normal_irradiance_instant
+    - terrestrial_radiation_instant
+    # misc
+    - is_day
+    - sunshine_duration
+
+# --- Open-Meteo Air Quality (AQI + pollutants) ------------------------
+# Same client/grid as weather, different endpoint. India is covered by CAMS
+# GLOBAL (0.4 deg, ~45 km); global archive starts Aug 2022. No CPCB/India AQI
+# exists in Open-Meteo -> us_aqi is the headline index; european_aqi for ref.
+# Raw pollutant concentrations are included so a CPCB AQI can be derived later.
+airquality:
+  archive_url: "https://air-quality-api.open-meteo.com/v1/air-quality"   # same host serves forecast
+  forecast_days: 7           # max 7 for air quality
+  api_key: ""
+  pipeline_run_id: "airquality_daily_v1"
+  cells_per_request: 50
+  minute_cost_budget: 500
+  rate_limit_backoff_s: 65
+  max_retries: 6
+  hourly_variables:
+    # pollutant concentrations (ug/m3, except CO/O3 in ug/m3 too)
+    - pm10
+    - pm2_5
+    - carbon_monoxide
+    - nitrogen_dioxide
+    - sulphur_dioxide
+    - ozone
+    - aerosol_optical_depth
+    - dust
+    - uv_index
+    # NOTE: 'ammonia' is dropped -- it is all-NaN over India in CAMS global.
+    # air quality indices (dimensionless)
+    - us_aqi
+    - us_aqi_pm2_5
+    - us_aqi_pm10
+    - us_aqi_nitrogen_dioxide
+    - us_aqi_ozone
+    - us_aqi_sulphur_dioxide
+    - us_aqi_carbon_monoxide
+    - european_aqi
+
+# --- IMD (authentic ground-truth benchmark: daily gridded) ------------
+# imdlib variables: 'rain' (0.25 grid, 1901+), 'tmax'/'tmin' (1 deg, 1951+)
+imd:
+  variables: [rain, tmax, tmin]
+  # imdlib downloads per calendar year; we derive years from the window.
+  # FIXED pipeline id stamped on every IMD row (identifies this API's runs).
+  pipeline_run_id: "imd_daily_v1"
+
+# --- Quality analysis -------------------------------------------------
+quality:
+  # Drop OM<->IMD cell matches farther apart than this (degrees). Removes
+  # ocean OM cells force-matched to distant coastal IMD land cells, which
+  # otherwise injects a large spurious cold/precip bias. ~half grid spacing.
+  max_match_dist_deg: 0.55
+
+# --- Storage ----------------------------------------------------------
+storage:
+  raw_dir: "data/raw"
+  processed_dir: "data/processed"
+  daily_dir: "data/daily"     # daily incremental outputs (CSV)
+  datasets_dir: "data/datasets"
+  # where `main.py run` writes: "postgres" (databank DB) or "csv"
+  target: postgres
+  openmeteo_format: parquet
+
+# --- Database (PostgreSQL) --------------------------------------------
+# Password is read from the env var named below (or a .env file at repo root) --
+# it is NEVER stored in this file. Create the DB + tables with `main.py db-init`.
+database:
+  host: localhost
+  port: 5432
+  dbname: databank
+  sslmode: prefer              # use 'require'/'verify-full' for remote/production
+  # app role (least privilege): owns the databank objects; used for all pipeline ops.
+  user: databank_app
+  password_env: DATABANK_APP_PASSWORD
+  # admin role: superuser, used ONLY to bootstrap roles / create the database.
+  admin_user: postgres
+  admin_password_env: DATABANK_PASSWORD
+  # read-only role for analysts / BI.
+  reader_user: databank_reader
+  reader_password_env: DATABANK_READER_PASSWORD
+  schema: public
+  weather_table: weather
+  airquality_table: air_quality
