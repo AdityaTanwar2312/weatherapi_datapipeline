@@ -84,8 +84,7 @@ database:
 
 Other knobs you may tune (all optional):
 - `region.resolution_deg` — grid spacing (default **0.5°** ≈ 1,109 India cells).
-- `time.temporal_step_hours` — **6** keeps 4 rows/day (00/06/12/18 IST); set `1` for hourly.
-- `openmeteo.forecast_days` / `airquality.forecast_days` — forecast horizon.
+- `openmeteo.forecast_days` / `airquality.forecast_days` — forecast horizon (weather ≤16, AQI ≤7).
 
 ---
 
