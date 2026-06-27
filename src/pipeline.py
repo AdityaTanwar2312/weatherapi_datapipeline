@@ -90,24 +90,12 @@ def _new_contexts(cfg: Config, data_type: str = "historical") -> tuple[str, dict
     return insertion_id, ctx
 
 
-def _downsample(df, cfg):
-    """Keep only every Nth hour (IST-aligned) per config.time.temporal_step_hours."""
-    step = int(cfg.time.get("temporal_step_hours", 1))
-    if step <= 1 or df is None or df.empty:
-        return df
-    tz = cfg.time.get("timezone", "Asia/Kolkata")
-    ist_hour = pd.to_datetime(df["time"], utc=True).dt.tz_convert(tz).dt.hour
-    return df[ist_hour % step == 0].reset_index(drop=True)
-
-
 def _fetch_history(source, cfg, cs, ce, ctx):
-    df = (om_fetch if source == "openmeteo" else aq_fetch).fetch_frame(cfg, cs, ce, ctx)
-    return _downsample(df, cfg)
+    return (om_fetch if source == "openmeteo" else aq_fetch).fetch_frame(cfg, cs, ce, ctx)
 
 
 def _fetch_forecast(source, cfg, ctx, days):
-    df = (om_fetch if source == "openmeteo" else aq_fetch).forecast_frame(cfg, ctx, days)
-    return _downsample(df, cfg)
+    return (om_fetch if source == "openmeteo" else aq_fetch).forecast_frame(cfg, ctx, days)
 
 
 def _dataset_path(source: str) -> Path:

@@ -33,10 +33,6 @@ time:
   start_date: "2024-06-01"
   end_date:   "2024-06-07"   # 1 week -> quick end-to-end proof
   timezone:   "Asia/Kolkata"
-  # Keep only every Nth hour (IST-aligned) -> 6 = 4 rows/day (00,06,12,18 IST).
-  # NOTE: shrinks stored rows, but does NOT reduce Open-Meteo cost/rate-limits
-  # (billing is by variables x days, not hourly steps). Set 1 for full hourly.
-  temporal_step_hours: 6
 
 # --- Daily incremental pull -------------------------------------------
 # run_daily.py pulls a TRAILING window ending `lag_days` ago. The lag
